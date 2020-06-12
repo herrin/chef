@@ -126,9 +126,30 @@ class Chef
         # yum upgrade does not work on uninstalled packaged, while install will upgrade
         alias upgrade_package install_package
 
+        # fail if the packages I just told yum to remove were not actually removed
+        def verify_removed(names)
+          names.each do |name|
+            begin
+              yum("--disablerepo=*", "info", name)
+              raise Chef::Exceptions::Package, "#{name} RPM still installed despite yum remove. "+
+                "Investigate with \"yum --assumeno remove #{name}\""
+            rescue Mixlib::ShellOut::ShellCommandFailed
+              # success! yum reports the package is no longer installed
+            end
+          end
+        end
+
         def remove_package(names, versions)
           resolved_names = names.each_with_index.map { |name, i| installed_version(i).to_s unless name.nil? }
-          yum(options, "-y", "remove", resolved_names)
+          if Chef::Config[:yum_remove_disable_recursion]
+            # yum expansively removes any packages which depend on the one it was told to remove
+            # Under Chef this is usually an operator error. So don't do that.
+            yum(options, "-y", "--setopt=remove_leaf_only=1", "remove", resolved_names)
+            # Remove_leaf_only fails silently. We have to make sure it really removed the package.
+            verify_removed(resolved_names)
+          else
+            yum(options, "-y", "remove", resolved_names)
+          end
           flushcache
         end
 

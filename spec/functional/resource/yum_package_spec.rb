@@ -913,6 +913,61 @@ describe Chef::Resource::YumPackage, :requires_root, external: exclude_test do
         expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm").stdout.chomp).to match("^package chef_rpm is not installed$")
       end
     end
+
+    context "with package dependencies" do
+      # chef_rpm_depender requires chef_rpm thus
+      # chef_rpm_depender must be removed first
+
+      it "recursively removes dependent packages" do
+        Chef::Config[:yum_remove_disable_recursion] = false
+        FileUtils.rm_f "/etc/yum.repos.d/chef-yum-localtesting.repo"
+        preinstall("chef_rpm-1.2-1.#{pkg_arch}.rpm", "chef_rpm_depender-1.10-1.noarch.rpm")
+        yum_package.package_name("chef_rpm")
+        yum_package.run_action(:remove)
+        expect(yum_package.updated_by_last_action?).to be true
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm").stdout.chomp).to match("^package chef_rpm is not installed$")
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm_depender").stdout.chomp).to match("^package chef_rpm_depender is not installed$")
+      end
+
+      it "removes non-dependent package" do
+        Chef::Config[:yum_remove_disable_recursion] = true
+        FileUtils.rm_f "/etc/yum.repos.d/chef-yum-localtesting.repo"
+        preinstall("chef_rpm-1.2-1.#{pkg_arch}.rpm", "chef_rpm_depender-1.10-1.noarch.rpm")
+        yum_package.package_name("chef_rpm_depender")
+        yum_package.run_action(:remove)
+        expect(yum_package.updated_by_last_action?).to be true
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm_depender").stdout.chomp).to match("^package chef_rpm_depender is not installed$")
+        yum_package.package_name("chef_rpm")
+        yum_package.run_action(:remove)
+        expect(yum_package.updated_by_last_action?).to be true
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm").stdout.chomp).to match("^package chef_rpm is not installed$")
+        Chef::Config[:yum_remove_disable_recursion] = false
+      end
+
+      it "removes both packages" do
+        Chef::Config[:yum_remove_disable_recursion] = true
+        FileUtils.rm_f "/etc/yum.repos.d/chef-yum-localtesting.repo"
+        preinstall("chef_rpm-1.2-1.#{pkg_arch}.rpm", "chef_rpm_depender-1.10-1.noarch.rpm")
+        yum_package.package_name(["chef_rpm_depender", "chef_rpm"])
+        yum_package.run_action(:remove)
+        expect(yum_package.updated_by_last_action?).to be true
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm_depender").stdout.chomp).to match("^package chef_rpm_depender is not installed$")
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm").stdout.chomp).to match("^package chef_rpm is not installed$")
+        Chef::Config[:yum_remove_disable_recursion] = false
+      end
+
+      it "refuses to remove required package" do
+        Chef::Config[:yum_remove_disable_recursion] = true
+        FileUtils.rm_f "/etc/yum.repos.d/chef-yum-localtesting.repo"
+        preinstall("chef_rpm-1.2-1.#{pkg_arch}.rpm", "chef_rpm_depender-1.10-1.noarch.rpm")
+        yum_package.package_name("chef_rpm")
+        expect { yum_package.run_action(:remove) }.to raise_error(Chef::Exceptions::Package, /RPM still installed/)
+        expect(shell_out("rpm -q --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' chef_rpm").stdout.chomp).to match("^chef_rpm")
+        yum_package.package_name(["chef_rpm_depender", "chef_rpm"])
+        yum_package.run_action(:remove)
+        Chef::Config[:yum_remove_disable_recursion] = false
+      end
+    end
   end
 
   describe ":lock and :unlock" do
